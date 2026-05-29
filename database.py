@@ -24,3 +24,26 @@ def get_db():
     with pool.connection() as conn:
         yield conn
 
+TABLE_NIMMIES = "nimmies"
+TABLE_TAGS = 'tags'
+TABLE_NIMMYTAGS = "nimmytags"
+
+with pool:
+    with pool.connection() as conn:
+        with conn.cursor() as c:
+            c.execute(f"""CREATE TABLE IF NOT EXISTS {TABLE_NIMMIES}(
+                  id SERIAL PRIMARY KEY,
+                  title VARCHAR(128) NOT NULL,
+                  content VARCHAR(1024) NOT NULL,
+                  date_created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                  date_updated TIMESTAMPTZ DEFAULT NULL,
+                  is_archived BOOLEAN DEFAULT FALSE,
+                  is_pinned BOOLEAN DEFAULT FALSE,
+                  is_deleted BOOLEAN DEFAULT FALSE)""")
+
+            c.execute(f"""CREATE TABLE IF NOT EXISTS {TABLE_TAGS}(
+                  id SERIAL PRIMARY KEY,
+                  name VARCHAR(64) UNIQUE)""")
+            
+            c.execute(f"CREATE TABLE IF NOT EXISTS {TABLE_NIMMYTAGS}(nimmy_id INTEGER, tag_id INTEGER, UNIQUE(nimmy_id, tag_id))")
+
