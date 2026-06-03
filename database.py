@@ -86,8 +86,8 @@ def list_nimmies(sort_by: str, sort_order: str, status: str, conn: psycopg.Conne
 
     base_sql_query = f"""SELECT 
                     n.id, 
-                    n.title, 
-                    n.date_created,
+                    n.title,
+                    COALESCE(n.date_updated, n.date_created) AS last_activity,
                     COALESCE( 
                     json_agg( t.name) FILTER (WHERE t.id IS NOT NULL), '[]' 
                     ) AS tags 
@@ -101,7 +101,7 @@ def list_nimmies(sort_by: str, sort_order: str, status: str, conn: psycopg.Conne
         base_sql_query += f"WHERE {STATUS_COLUMNS[status]} = true "
 
     base_sql_query += f"GROUP BY n.id ORDER BY {SORT_COLUMNS[sort_by]} {sort_order}"
-    
+
     with conn.cursor() as c:
         c.execute(base_sql_query)
         
@@ -113,7 +113,7 @@ def read_nimmy(nimmy_id: int, conn: psycopg.Connection):
                   n.id,
                   n.title,
                   n.content,
-                  COALESCE(n.date_updated, n.date_created) AS timestamp,
+                  COALESCE(n.date_updated, n.date_created) AS last_activity,
                   COALESCE(
                   json_agg(t.name) FILTER (WHERE t.id IS NOT NULL), '[]') AS tags,
                   n.is_deleted,
@@ -127,3 +127,41 @@ def read_nimmy(nimmy_id: int, conn: psycopg.Connection):
                   WHERE n.id = %s GROUP BY n.id""", (nimmy_id,))
         
         return c.fetchone()
+    
+def update_nimmy(nimmy_id: int, title: str | None, content: str | None, tags: list, conn: psycopg.Connection):
+
+    update_queries = []
+    update_values = []
+
+    if title is not None:
+        update_queries.append("title = %s")
+        update_values.append(title)
+    
+    if content is not None:
+        update_queries.append("content = %s")
+        update_values.append(content)
+
+    update_queries.append('date_updated = NOW()')
+    update_values.append(nimmy_id)
+
+    sql_query = f"UPDATE nimmies SET {', '.join(update_queries)} WHERE id = %s"
+
+    with conn.cursor() as c:
+        c.execute(sql_query, tuple(update_values))
+        
+        if not tags:
+            return c.rowcount > 0
+        
+        for tag in tags:
+            c.execute('SELECT id from tags WHERE name = %s', (tag,))
+            row = c.fetchone()
+
+            if row is not None:
+                c.execute("INSERT INTO nimmytags (nimmy_id, tag_id) VALUES (%s, %s)", (nimmy_id, row['id']))
+
+                continue
+
+            c.execute('INSERT INTO tags (name) VALUES (%s) RETURNING id AS tag_id', (tag,))
+            tag_id = c.fetchone()['tag_id']
+
+            c.execute('INSERT INTO nimmytags (nimmy_id, tag_id) VALUES (%s, %s)', (nimmy_id, tag_id))

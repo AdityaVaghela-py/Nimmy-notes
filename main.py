@@ -1,17 +1,53 @@
 from fastapi import FastAPI, Depends, Query
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from psycopg import Connection
 import database as db
 
 class Nimmy(BaseModel):
-    title: str = Field(..., title="The name of the Nimmy", description="The title is used to identify a specific nimmy before getting into its details, ideal length is 128 or lesser", examples=["Do the math work in the morning after waking up", "Grocerry shopping", "Have to farm for flins in genshin impact"], max_length=128)
+    title: str = Field(
+        ..., 
+        title="The name of the Nimmy", 
+        description="The title is used to identify a specific nimmy before getting into its details, ideal length is 128 or lesser", 
+        examples=["Do the math work in the morning after waking up", "Grocerry shopping", "Have to farm for flins in genshin impact"], 
+        max_length=128
+    )
 
-    content: str = Field(..., title="Give your Nimmy more details", description="The description can further be used to give the Nimmy more information, in 1024 or lesser characters", examples=["I have scored 80+ in maths, but now i want to go higher, I am targeting for 95 this time", "Mom has asked me to buy some things from the market, andI too have noticed lack of grocery in the home, so I better consider it before we start lacking", "Genshin just released it's brand new character Flins and I am damn impressed with its skills, I WANT IT NOWWWWWW"], max_length=1024)
+    content: str = Field(
+        ..., 
+        title="Give your Nimmy more details", 
+        description="The description can further be used to give the Nimmy more information, in 1024 or lesser characters", 
+        examples=["I have scored 80+ in maths, but now i want to go higher, I am targeting for 95 this time", "Mom has asked me to buy some things from the market, andI too have noticed lack of grocery in the home, so I better consider it before we start lacking", "Genshin just released it's brand new character Flins and I am damn impressed with its skills, I WANT IT NOWWWWWW"], 
+        max_length=1024
+    )
 
-    tags: List[str] = Field(default_factory=list, title="Tags make it easy to identify, search and sort Nimmies", description="Provide as many tags as you want in a list, or ommit this field if no tags are required for this Nimmy", examples=[['important', 'math'], ['important'], ['gaming', 'genshin', 'pulls']])
+    tags: List[str] = Field(
+        default_factory=list, 
+        title="Tags make it easy to identify, search and sort Nimmies", 
+        description="Provide as many tags as you want in a list, or ommit this field if no tags are required for this Nimmy", 
+        examples=[['important', 'math'], ['important'], ['gaming', 'genshin', 'pulls']]
+    )
+
+class PatchNimmy(BaseModel):
+    title: Optional[str] = Field(
+        default=None, 
+        title="New name of the Nimmy", 
+        description="The title is used to identify a specific nimmy before getting into its details, ideal length is 128 or lesser",
+        max_length=128
+    )
+    content: Optional[str] = Field(
+        default=None, 
+        title="New content of your Nimmy", 
+        description="The description can further be used to give the Nimmy more information, in 1024 or lesser characters",
+        max_length=1024
+    )
+    tags: List[str] = Field(
+        default_factory=list, 
+        title="Tags make it easy to identify, search and sort Nimmies", 
+        description="Provide as many tags as you want in a list, or ommit this field if no tags are required for this Nimmy"
+    )
 
 
 @asynccontextmanager
@@ -31,7 +67,7 @@ app = FastAPI(lifespan=lifespan)
 @app.post('/nimmies', status_code=201)
 def add_nimmy(nimmy: Nimmy, conn: Connection = Depends(db.get_db)):
     nimmy_id = db.add_nimmy(nimmy.title, nimmy.content, nimmy.tags, conn)
-    
+
     return {'message': f"A Nimmy with an ID {nimmy_id} was added in the database"}
 
 @app.get('/nimmies')
@@ -63,3 +99,8 @@ def list_nimmies(
 def read_nimmy(nimmy_id: int, conn: Connection = Depends(db.get_db)):
 
     return db.read_nimmy(nimmy_id, conn)
+
+@app.patch('/nimmies/{nimmy_id}')
+def update_nimmy(nimmy_id: str, patch_nimmy: PatchNimmy, conn: Connection = Depends(db.get_db)):
+    
+    return db.update_nimmy(nimmy_id, patch_nimmy.title, patch_nimmy.content, patch_nimmy.tags, conn)
