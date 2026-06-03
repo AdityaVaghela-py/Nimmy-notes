@@ -67,3 +67,34 @@ def add_nimmy(nimmy_title: str, nimmy_content: str, nimmy_tags: list, conn: psyc
             tag_id = c.fetchone()['tag_id']
 
             c.execute('INSERT into nimmytags (nimmy_id, tag_id) VALUES (%s, %s)', (nimmy_id, tag_id))
+        
+        return nimmy_id
+
+def list_nimmies(sort_by: str, sort_order: str, status: str, conn: psycopg.Connection):
+    base_sql_query = f"""SELECT 
+                    n.id, 
+                    n.title, 
+                    n.date_created,
+                    COALESCE( 
+                    json_agg( t.name) FILTER (WHERE t.id IS NOT NULL), '[]' 
+                    ) AS tags 
+                    FROM nimmies AS n
+                    LEFT JOIN nimmytags 
+                    ON n.id = nimmytags.nimmy_id 
+                    LEFT JOIN tags AS t
+                    ON t.id = nimmytags.tag_id """
+    
+    if status != 'all':
+        base_sql_query += f"WHERE n.{status} = true "
+
+    base_sql_query += f"GROUP BY n.id "
+
+    if sort_by == 'time':
+        base_sql_query += f"ORDER BY COALESCE(date_updated, date_created) {sort_order}"
+    else:
+        base_sql_query += f"ORDER BY n.{sort_by} {sort_order}"
+
+    with conn.cursor() as c:
+        c.execute(base_sql_query)
+        
+        return c.fetchall()

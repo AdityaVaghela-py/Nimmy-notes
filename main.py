@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Query
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Literal
 
 from psycopg import Connection
 import database as db
@@ -28,6 +28,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.post('/nimmies')
+@app.post('/nimmies', status_code=201)
 def add_nimmy(nimmy: Nimmy, conn: Connection = Depends(db.get_db)):
-    db.add_nimmy(nimmy.title, nimmy.content, nimmy.tags, conn)
+    nimmy_id = db.add_nimmy(nimmy.title, nimmy.content, nimmy.tags, conn)
+    return {'message': f"A Nimmy with an ID {nimmy_id} was added in the database"}
+
+@app.get('/nimmies')
+def list_nimmies(
+    sort_by: Literal['id', 'title', 'time'] = Query(
+        default='id', 
+        title="Sort Nimmies", 
+        description="Select whether the nimmies should be sorted, by what column if so",
+        examples=['id', 'title', 'time']
+    ),
+    sort_order: Literal['asc', 'desc'] = Query(
+        default='asc', 
+        title="Order of sorting nimmies", 
+        description="Change the order of sorting",
+        examples=['asc', 'desc']
+    ),
+    status: Literal['all', 'is_deleted', 'is_archived', 'is_pinned'] = Query(
+        default='all', 
+        title="Filter the Nimmies",
+        description="Choose whether you want all the data, only deleted, archived etc",
+        examples=["all", "is_deleted", "is_archived", "is_pinned"]
+    ),
+    conn : Connection = Depends(db.get_db)
+):
+    
+    return db.list_nimmies(sort_by, sort_order, status, conn)
