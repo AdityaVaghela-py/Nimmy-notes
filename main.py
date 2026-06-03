@@ -31,6 +31,7 @@ app = FastAPI(lifespan=lifespan)
 @app.post('/nimmies', status_code=201)
 def add_nimmy(nimmy: Nimmy, conn: Connection = Depends(db.get_db)):
     nimmy_id = db.add_nimmy(nimmy.title, nimmy.content, nimmy.tags, conn)
+    
     return {'message': f"A Nimmy with an ID {nimmy_id} was added in the database"}
 
 @app.get('/nimmies')
@@ -57,3 +58,8 @@ def list_nimmies(
 ):
     
     return db.list_nimmies(sort_by, sort_order, status, conn)
+
+@app.get('/nimmies/{nimmy_id}')
+def read_nimmy(nimmy_id: int, conn: Connection = Depends(db.get_db)):
+
+    return db.read_nimmy(nimmy_id, conn)

@@ -71,6 +71,19 @@ def add_nimmy(nimmy_title: str, nimmy_content: str, nimmy_tags: list, conn: psyc
         return nimmy_id
 
 def list_nimmies(sort_by: str, sort_order: str, status: str, conn: psycopg.Connection):
+
+    SORT_COLUMNS = {
+        'id': 'n.id',
+        'title': 'n.title',
+        'time': 'COALESCE(n.date_updated, n.date_created)'
+    }
+
+    STATUS_COLUMNS = {
+        'is_deleted': 'n.is_deleted',
+        'is_archived': 'n.is_archived',
+        'is_pinned': 'n.is_pinned'
+    }
+
     base_sql_query = f"""SELECT 
                     n.id, 
                     n.title, 
@@ -85,16 +98,32 @@ def list_nimmies(sort_by: str, sort_order: str, status: str, conn: psycopg.Conne
                     ON t.id = nimmytags.tag_id """
     
     if status != 'all':
-        base_sql_query += f"WHERE n.{status} = true "
+        base_sql_query += f"WHERE {STATUS_COLUMNS[status]} = true "
 
-    base_sql_query += f"GROUP BY n.id "
-
-    if sort_by == 'time':
-        base_sql_query += f"ORDER BY COALESCE(date_updated, date_created) {sort_order}"
-    else:
-        base_sql_query += f"ORDER BY n.{sort_by} {sort_order}"
-
+    base_sql_query += f"GROUP BY n.id ORDER BY {SORT_COLUMNS[sort_by]} {sort_order}"
+    
     with conn.cursor() as c:
         c.execute(base_sql_query)
         
         return c.fetchall()
+    
+def read_nimmy(nimmy_id: int, conn: psycopg.Connection):
+    with conn.cursor() as c:
+        c.execute("""SELECT
+                  n.id,
+                  n.title,
+                  n.content,
+                  COALESCE(n.date_updated, n.date_created) AS timestamp,
+                  COALESCE(
+                  json_agg(t.name) FILTER (WHERE t.id IS NOT NULL), '[]') AS tags,
+                  n.is_deleted,
+                  n.is_archived,
+                  n.is_pinned
+                  FROM nimmies AS n
+                  LEFT JOIN nimmytags as nt
+                  ON n.id = nt.nimmy_id
+                  LEFT JOIN tags as t
+                  ON nt.tag_id = t.id
+                  WHERE n.id = %s GROUP BY n.id""", (nimmy_id,))
+        
+        return c.fetchone()
