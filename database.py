@@ -32,15 +32,15 @@ def create_tables(conn: psycopg.Connection):
                   content VARCHAR(1024) NOT NULL,
                   date_created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                   date_updated TIMESTAMPTZ DEFAULT NULL,
-                  is_archived BOOLEAN DEFAULT FALSE,
                   is_pinned BOOLEAN DEFAULT FALSE,
-                  is_deleted BOOLEAN DEFAULT FALSE)""")
+                  status VARCHAR(16) NOT NULL DEFAULT 'active',
+                  CONSTRAINT status_check CHECK(status IN ('active', 'archived', 'deleted')))""")
 
         c.execute("""CREATE TABLE IF NOT EXISTS tags(
                   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                  name VARCHAR(64) UNIQUE)""")
+                  name VARCHAR(64) UNIQUE NOT NULL)""")
             
-        c.execute("CREATE TABLE IF NOT EXISTS nimmytags (nimmy_id INTEGER, tag_id INTEGER, UNIQUE(nimmy_id, tag_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS nimmytags (nimmy_id INTEGER references nimmies(id), tag_id INTEGER references tags(id), UNIQUE(nimmy_id, tag_id))")
 
 def add_nimmy(nimmy_title: str, nimmy_content: str, nimmy_tags: list, conn: psycopg.Connection):
 
@@ -69,44 +69,55 @@ def add_nimmy(nimmy_title: str, nimmy_content: str, nimmy_tags: list, conn: psyc
             c.execute('INSERT into nimmytags (nimmy_id, tag_id) VALUES (%s, %s)', (nimmy_id, tag_id))
         
         return nimmy_id
-
-def list_nimmies(sort_by: str, sort_order: str, status: str, conn: psycopg.Connection):
-
-    SORT_COLUMNS = {
+    
+def list_nimmies(
+        sort_by: str,
+        sort_order: str,
+        status: str,
+        pinned_only: bool,
+        conn: psycopg.Connection
+):
+    SORT_BY_COLUMNS = {
         'id': 'n.id',
         'title': 'n.title',
-        'time': 'COALESCE(n.date_updated, n.date_created)'
+        'activity': 'COALESCE(n.date_updated, n.date_created)'
     }
 
-    STATUS_COLUMNS = {
-        'is_deleted': 'n.is_deleted',
-        'is_archived': 'n.is_archived',
-        'is_pinned': 'n.is_pinned'
-    }
+    conditions = []
+    condition_values = []
 
-    base_sql_query = f"""SELECT 
-                    n.id, 
-                    n.title,
-                    COALESCE(n.date_updated, n.date_created) AS last_activity,
-                    COALESCE( 
-                    json_agg( t.name) FILTER (WHERE t.id IS NOT NULL), '[]' 
-                    ) AS tags 
-                    FROM nimmies AS n
-                    LEFT JOIN nimmytags 
-                    ON n.id = nimmytags.nimmy_id 
-                    LEFT JOIN tags AS t
-                    ON t.id = nimmytags.tag_id """
+    base_sql_query = f"""SELECT
+                        n.id,
+                        n.title,
+                        COALESCE(n.date_updated, n.date_created) AS last_activity,
+                        COALESCE(json_agg(t.name) FILTER (WHERE t.id IS NOT NULL), '[]'::json) AS tags
+                        FROM nimmies AS n
+                        LEFT JOIN nimmytags AS nt
+                        ON n.id = nt.nimmy_id
+                        LEFT JOIN tags AS t
+                        ON t.id = nt.tag_id """
     
     if status != 'all':
-        base_sql_query += f"WHERE {STATUS_COLUMNS[status]} = true "
+        conditions.append("n.status = %s")
+        condition_values.append(status)
+    
+    if pinned_only:
+        conditions.append("n.is_pinned = %s")
+        condition_values.append(pinned_only)
 
-    base_sql_query += f"GROUP BY n.id ORDER BY {SORT_COLUMNS[sort_by]} {sort_order}"
+    base_sql_query += (
+        " WHERE " + " AND ".join(conditions)
+        if conditions
+        else ""
+    )
+
+    base_sql_query += f" GROUP BY n.id ORDER BY {SORT_BY_COLUMNS[sort_by]} {sort_order}"
 
     with conn.cursor() as c:
-        c.execute(base_sql_query)
-        
+        c.execute(base_sql_query, condition_values)
+
         return c.fetchall()
-    
+
 def read_nimmy(nimmy_id: int, conn: psycopg.Connection):
     with conn.cursor() as c:
         c.execute("""SELECT
@@ -115,9 +126,8 @@ def read_nimmy(nimmy_id: int, conn: psycopg.Connection):
                   n.content,
                   COALESCE(n.date_updated, n.date_created) AS last_activity,
                   COALESCE(
-                  json_agg(t.name) FILTER (WHERE t.id IS NOT NULL), '[]') AS tags,
-                  n.is_deleted,
-                  n.is_archived,
+                  json_agg(t.name) FILTER (WHERE t.id IS NOT NULL), '[]'::json) AS tags,
+                  n.status,
                   n.is_pinned
                   FROM nimmies AS n
                   LEFT JOIN nimmytags as nt

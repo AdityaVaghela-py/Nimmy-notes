@@ -84,16 +84,17 @@ def list_nimmies(
         description="Change the order of sorting",
         examples=['asc', 'desc']
     ),
-    status: Literal['all', 'is_deleted', 'is_archived', 'is_pinned'] = Query(
-        default='all', 
+    status: Literal['all', 'active', 'deleted', 'archived'] = Query(
+        default='active', 
         title="Filter the Nimmies",
         description="Choose whether you want all the data, only deleted, archived etc",
-        examples=["all", "is_deleted", "is_archived", "is_pinned"]
+        examples=["all", "active", "deleted", "archived"]
     ),
+    pinned_only: bool = Query(default=False, examples=[True, False]),
     conn : Connection = Depends(db.get_db)
 ):
     
-    return db.list_nimmies(sort_by, sort_order, status, conn)
+    return db.list_nimmies(sort_by=sort_by, sort_order=sort_order, status=status, pinned_only=pinned_only, conn=conn)
 
 @app.get('/nimmies/{nimmy_id}')
 def read_nimmy(nimmy_id: int, conn: Connection = Depends(db.get_db)):
