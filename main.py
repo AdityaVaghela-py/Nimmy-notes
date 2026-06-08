@@ -1,10 +1,10 @@
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, Query, HTTPException
 from contextlib import asynccontextmanager
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
 from psycopg import Connection
-import database as db
+import db
 
 class Nimmy(BaseModel):
     title: str = Field(
@@ -30,25 +30,14 @@ class Nimmy(BaseModel):
         examples=[['important', 'math'], ['important'], ['gaming', 'genshin', 'pulls']]
     )
 
-class PatchNimmy(BaseModel):
-    title: Optional[str] = Field(
-        default=None, 
-        title="New name of the Nimmy", 
-        description="The title is used to identify a specific nimmy before getting into its details, ideal length is 128 or lesser",
-        max_length=128
+class Tag(BaseModel):
+    name : str = Field(
+        ...,
+        title="Tag of the nimmy",
+        description="A tag is a term linking to a specific nimmy and further group more nimmies with eachother by a single tag, makes it easy to filter",
+        examples=['python', 'programming language', 'gaming', 'important', 'imp'],
+        max_length=32
     )
-    content: Optional[str] = Field(
-        default=None, 
-        title="New content of your Nimmy", 
-        description="The description can further be used to give the Nimmy more information, in 1024 or lesser characters",
-        max_length=1024
-    )
-    tags: List[str] = Field(
-        default_factory=list, 
-        title="Tags make it easy to identify, search and sort Nimmies", 
-        description="Provide as many tags as you want in a list, or ommit this field if no tags are required for this Nimmy"
-    )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -65,43 +54,52 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 @app.post('/nimmies', status_code=201)
-def add_nimmy(nimmy: Nimmy, conn: Connection = Depends(db.get_db)):
-    nimmy_id = db.add_nimmy(nimmy.title, nimmy.content, nimmy.tags, conn)
+def add_nimmy(
+    nimmy: Nimmy,
+    conn: Connection = Depends(db.get_db)
+):
+    status = db.add_a_nimmy(
+        title=nimmy.title,
+        content=nimmy.content,
+        tags=nimmy.tags,
+        conn=conn
+    )
 
-    return {'message': f"A Nimmy with an ID {nimmy_id} was added in the database"}
+    if not status['success']:
+        raise HTTPException(
+            status_code=409,
+            detail=status
+        )
+    
+    return status
+
+@app.post('/nimmies/{nimmy_id}/tags', status_code=201)
+def link_tag(nimmy_id: int, tag: Tag, conn: Connection = Depends(db.get_db)):
+
+    status = db.link_tag(
+        nimmy_id=nimmy_id,
+        tag=tag.name,
+        conn=conn
+    )
+
+    return status
 
 @app.get('/nimmies')
 def list_nimmies(
-    sort_by: Literal['id', 'title', 'time'] = Query(
-        default='id', 
-        title="Sort Nimmies", 
-        description="Select whether the nimmies should be sorted, by what column if so",
-        examples=['id', 'title', 'time']
-    ),
-    sort_order: Literal['asc', 'desc'] = Query(
-        default='asc', 
-        title="Order of sorting nimmies", 
-        description="Change the order of sorting",
-        examples=['asc', 'desc']
-    ),
-    status: Literal['all', 'active', 'deleted', 'archived'] = Query(
-        default='active', 
-        title="Filter the Nimmies",
-        description="Choose whether you want all the data, only deleted, archived etc",
-        examples=["all", "active", "deleted", "archived"]
-    ),
-    pinned_only: bool = Query(default=False, examples=[True, False]),
-    conn : Connection = Depends(db.get_db)
+    sort_by: Literal['id', 'title', 'last_activity'] = Query(default='last_activity'),
+    sort_order: Literal['asc', 'desc'] = Query(default='desc'),
+    pinned_only: bool = Query(default=False),
+    status: Literal['all', 'active', 'archived', 'deleted'] = Query(default='all'),
+    contains_tag_id: int | None = Query(default=None),
+    search_by: str = Query(default=None, max_length=128),
+    conn: Connection = Depends(db.get_db)
 ):
-    
-    return db.list_nimmies(sort_by=sort_by, sort_order=sort_order, status=status, pinned_only=pinned_only, conn=conn)
-
-@app.get('/nimmies/{nimmy_id}')
-def read_nimmy(nimmy_id: int, conn: Connection = Depends(db.get_db)):
-
-    return db.read_nimmy(nimmy_id, conn)
-
-@app.patch('/nimmies/{nimmy_id}')
-def update_nimmy(nimmy_id: str, patch_nimmy: PatchNimmy, conn: Connection = Depends(db.get_db)):
-    
-    return db.update_nimmy(nimmy_id, patch_nimmy.title, patch_nimmy.content, patch_nimmy.tags, conn)
+    return db.list_nimmies(
+        sort_by=sort_by,
+        sort_order=sort_order,
+        pinned_only=pinned_only,
+        status=status,
+        contains_tag_id=contains_tag_id,
+        search_by=search_by,
+        conn=conn
+    )

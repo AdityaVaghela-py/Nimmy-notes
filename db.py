@@ -15,7 +15,7 @@ DB_PORT = getenv("DB_PORT")
 pool = ConnectionPool(
     conninfo=f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}",
     kwargs={
-        'row_factory': dict_row()
+        'row_factory': dict_row
     },
     min_size=2,
     max_size=10,
@@ -32,7 +32,7 @@ def create_tables(conn: psycopg.Connection):
         c.execute("""
                   CREATE TABLE IF NOT EXISTS nimmies(
                   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                  title VARCHAR(128) NOT NULL,
+                  title VARCHAR(128) UNIQUE NOT NULL,
                   content VARCHAR(1024) NOT NULL,
                   date_created TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                   date_updated TIMESTAMPTZ DEFAULT NULL,
@@ -84,6 +84,14 @@ def link_tag(nimmy_id: int, tag: str, conn: psycopg.Connection):
                  """,
                  (nimmy_id, tag_id)
             )
+
+            return {
+                 'success': True,
+                 'message': f"A tag was successfully linked to the nimmy with an id of {nimmy_id}",
+                 'data': {
+                      'tag_id': tag_id
+                 }
+            }
           
 
 def unlink_tag(nimmy_id: int, tag_id: int, conn: psycopg.Connection):
@@ -132,17 +140,46 @@ def add_a_nimmy(title: str, content: str, tags: list, conn: psycopg.Connection):
                """
                INSERT INTO nimmies(title, content)
                VALUES (%s, %s)
+               ON CONFLICT (title) DO NOTHING
                RETURNING id as nimmy_id
                """, 
                (title, content)
           )
-          nimmy_id = c.fetchone()['nimmy_id']
+          row = c.fetchone()
+
+          if row is None:
+               return {
+                    'success': False,
+                    'message': 'Title Already Exists',
+                    'data': None
+               }
+          else:
+               nimmy_id = row['nimmy_id']
 
           if not tags:
-               return
+               return {
+                    'success': True,
+                    'message': 'Added Nimmy to the database without any tag',
+                    'data': {
+                         'nimmy_id': nimmy_id
+                    }
+               }
+          
+          tag_ids = []
           
           for tag in tags:
-               link_tag(nimmy_id, tag, conn)
+               tag_id = link_tag(nimmy_id, tag, conn)['data']['tag_id']
+
+               tag_ids.append(tag_id)
+          
+          return {
+               'success': True,
+               'message': 'Added Nimmy to the database with given tags',
+               'data': {
+                    'nimmy_id': nimmy_id,
+                    'tag_ids': tag_ids
+               }
+          }
 
 def read_a_nimmy(nimmy_id: str, conn: psycopg.Connection):
      with conn.cursor() as c:
@@ -183,7 +220,7 @@ def list_nimmies(
           sort_order: str,
           pinned_only: bool,
           status: str,
-          contains_tag_id: int,
+          contains_tag_id: int | None,
           search_by: str,
           conn: psycopg.Connection
 ):
