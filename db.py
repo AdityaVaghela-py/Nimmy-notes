@@ -47,7 +47,12 @@ def create_tables(conn: psycopg.Connection):
                   name VARCHAR(64) UNIQUE NOT NULL)
                   """)
             
-        c.execute("CREATE TABLE IF NOT EXISTS nimmytags (nimmy_id INTEGER references nimmies(id), tag_id INTEGER references tags(id), UNIQUE(nimmy_id, tag_id))")
+        c.execute("""
+                  CREATE TABLE IF NOT EXISTS nimmytags(
+                  nimmy_id INTEGER references nimmies(id) ON DELETE CASCADE, 
+                  tag_id INTEGER references tags(id) ON DELETE CASCADE, 
+                  UNIQUE(nimmy_id, tag_id))
+                  """)
 
 #Tag related activities:
 
@@ -181,7 +186,7 @@ def add_a_nimmy(title: str, content: str, tags: list, conn: psycopg.Connection):
                }
           }
 
-def read_a_nimmy(nimmy_id: str, conn: psycopg.Connection):
+def read_a_nimmy(nimmy_id: int, conn: psycopg.Connection):
      with conn.cursor() as c:
           c.execute(
                """
@@ -222,6 +227,8 @@ def list_nimmies(
           status: str,
           contains_tag_id: int | None,
           search_by: str,
+          page: int,
+          limit: int,
           conn: psycopg.Connection
 ):
      SORT_COLUMNS = {
@@ -246,36 +253,62 @@ def list_nimmies(
           filter_values.append(contains_tag_id)
 
      if search_by:
-          filter_queries.append("n.title ILIKE %s")
-          filter_values.append(f"%{search_by}%")
+          filter_queries.append("(n.title ILIKE %s OR n.content ILIKE %s)")
+          filter_values.extend([
+               f"%{search_by}%",
+               f"%{search_by}%"
+          ])
 
-     sql_query = f"""
-               SELECT
+     initiate_query = "SELECT "
+     number_of_nimmies = " COUNT(*) AS total_nimmies "
+     details_of_nimmy = """ 
                n.id AS nimmy_id,
                n.title AS nimmy_title,
                COALESCE(n.date_updated, n.date_created) AS last_activity,
-               COALESCE(
-                    json_agg(t.name) FILTER (WHERE t.id IS NOT NULL),
-                    '[]'::json
-               ) AS nimmy_tags,
-               n.is_pinned AS is_nimmy_pinned
-               FROM nimmies AS n
+               COALESCE(json_agg(t.name) FILTER (WHERE t.id IS NOT NULL),'[]'::json) AS nimmy_tags,
+               n.is_pinned AS is_nimmy_pinned 
+               """
+     source_table = " FROM nimmies AS n "
+     joins_on_source_table = """ 
                LEFT JOIN nimmytags
                ON n.id = nimmytags.nimmy_id
                LEFT JOIN tags AS t
                ON t.id = nimmytags.tag_id 
                """
+
+     total_nimmies_query = initiate_query + number_of_nimmies + source_table
+     list_nimmies_query = initiate_query + details_of_nimmy + source_table + joins_on_source_table
+
+
      if filter_queries:
-          sql_query+= " WHERE " + " AND ".join(filter_queries)
+          where_clause = " WHERE " + " AND ".join(filter_queries)
+
+          total_nimmies_query += where_clause
+          list_nimmies_query += where_clause
      
-     sql_query += f" GROUP BY n.id ORDER BY is_nimmy_pinned DESC, {SORT_COLUMNS[sort_by]} {sort_order}"
+     list_nimmies_query += f" GROUP BY n.id ORDER BY is_nimmy_pinned DESC, {SORT_COLUMNS[sort_by]} {sort_order} LIMIT %s OFFSET %s"
 
      with conn.cursor() as c:
           c.execute(
-               sql_query,
-               filter_values
+               total_nimmies_query,
+               tuple(filter_values)
           )
-          return c.fetchall()
+
+          row = c.fetchone()
+
+          filter_values.extend([limit, (page - 1) * limit])
+
+          c.execute(
+               list_nimmies_query,
+               tuple(filter_values)
+          )
+          return {
+               'page': page,
+               'limit': limit,
+               **row,
+               'total_pages': (row['total_nimmies'] + limit - 1) // limit,
+               'items': c.fetchall()
+          }
 
 def edit_nimmy(
      nimmy_id : int,
@@ -287,14 +320,14 @@ def edit_nimmy(
      edit_values = []
 
      if title:
-          edit_queries.append('n.title = %s')
+          edit_queries.append('title = %s')
           edit_values.append(title)
      
      if content:
-          edit_queries.append('n.content = %s')
+          edit_queries.append('content = %s')
           edit_values.append(content)
      
-     edit_queries.append('n.date_updated = NOW()')
+     edit_queries.append('date_updated = NOW()')
      edit_values.append(nimmy_id)
 
      updates = ', '.join(edit_queries)
@@ -304,9 +337,9 @@ def edit_nimmy(
                f"""
                UPDATE nimmies
                SET {updates}
-               WHERE n.id = %s
+               WHERE id = %s
                """,
-               (edit_values)
+               tuple(edit_values)
           )
           return c.rowcount > 0
      
@@ -323,14 +356,4 @@ def delete_nimmy(
                (nimmy_id,)
           )
 
-          is_deleted = c.rowcount > 0
-
-          c.execute(
-               """
-               DELETE from nimmytags
-               WHERE nimmy_id = %s
-               """,
-               (nimmy_id,)
-          )
-
-          return is_deleted
+          return c.rowcount > 0
